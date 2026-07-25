@@ -1,5 +1,22 @@
 import json
 import html
+import os
+import time
+import hmac
+import hashlib
+import base64
+import urllib.parse
+
+import boto3
+
+# Shared with trades — must match trades' IDENTITY_SECRET env var so we can
+# verify the handoff token trades mints. Set in the Lambda console.
+IDENTITY_SECRET = os.environ.get("IDENTITY_SECRET", "")
+
+# SES: same sender pattern as the other functions.
+SES_SENDER = "agent@agent.graciagroup.com"
+SES_REPLY_TO = "cgracia@rainmakersecurities.com"
+BID_NOTIFY_TO = "cgracia@rainmakersecurities.com"
 
 
 def _q(event, key):
@@ -7,12 +24,128 @@ def _q(event, key):
     return (event.get("queryStringParameters") or {}).get(key)
 
 
-def lambda_handler(event, context):
+def _method(event):
+    """HTTP method from a Function URL (payload v2) event."""
+    return (((event.get("requestContext") or {}).get("http") or {}).get("method")
+            or event.get("httpMethod") or "GET").upper()
+
+
+def _verify_handoff_token(token):
+    """Reverse of trades' _make_handoff_token:
+      base64url(email|exp|sig), sig = HMAC-SHA256(IDENTITY_SECRET, "email|exp").
+    Returns the verified email if the signature is valid AND not expired, else None.
+    Never raises."""
+    if not IDENTITY_SECRET or not token:
+        return None
+    try:
+        decoded = base64.urlsafe_b64decode(token + "=" * (-len(token) % 4)).decode()
+        email, exp, sig = decoded.rsplit("|", 2)
+        expected = hmac.new(IDENTITY_SECRET.encode(), f"{email}|{exp}".encode(),
+                            hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(expected, sig):
+            return None
+        if int(exp) < int(time.time()):
+            return None
+        return email
+    except Exception:
+        return None
+
+
+def _json_response(status, obj):
+    return {
+        "statusCode": status,
+        "headers": {"Content-Type": "application/json"},
+        "body": json.dumps(obj),
+    }
+
+
+def _send_bid_email(email, company_id, company_name, gross, min_size, max_size, structure):
+    """Email the bid to Chad. No Pipeline write yet — this is the safe first step."""
+    ses = boto3.client("ses", region_name="us-east-1")
+    struct_txt = ", ".join(structure) if structure else "(none)"
+    subject = f"New web bid: {company_name} @ ${gross}/sh"
+    body = (
+        f"A firm buy bid was submitted through the web-bid page.\n\n"
+        f"Company:      {company_name} (id {company_id})\n"
+        f"Bidder:       {email}\n"
+        f"Gross price:  ${gross}/share\n"
+        f"Min size:     ${min_size}\n"
+        f"Max size:     ${max_size}\n"
+        f"Structure:    {struct_txt}\n\n"
+        f"(No Pipeline deal was created — this is the email-only step.)\n"
+    )
+    ses.send_email(
+        Source=SES_SENDER,
+        Destination={"ToAddresses": [BID_NOTIFY_TO]},
+        ReplyToAddresses=[SES_REPLY_TO],
+        Message={
+            "Subject": {"Data": subject},
+            "Body": {"Text": {"Data": body}},
+        },
+    )
+
+
+def _handle_post(event):
+    """Process a submitted bid. Requires a valid handoff token (sso)."""
+    raw = event.get("body") or "{}"
+    if event.get("isBase64Encoded"):
+        try:
+            raw = base64.b64decode(raw).decode("utf-8")
+        except Exception:
+            return _json_response(400, {"ok": False, "error": "Bad request."})
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return _json_response(400, {"ok": False, "error": "Bad request."})
+
+    email = _verify_handoff_token(data.get("sso") or "")
+    if not email:
+        return _json_response(401, {"ok": False,
+                                    "error": "Please open this from the trades page while logged in."})
+
+    try:
+        gross = float(data.get("gross"))
+        min_size = float(data.get("min_size"))
+        max_size = float(data.get("max_size"))
+    except (TypeError, ValueError):
+        return _json_response(400, {"ok": False, "error": "Invalid numbers."})
+
+    structure = data.get("structure") or []
+    allowed = {"Direct", "Fund", "Forward"}
+    structure = [s for s in structure if s in allowed]
+
+    company_id = str(data.get("company_id") or "")
+    company_name = str(data.get("company_name") or "")
+
+    if not (gross > 0):
+        return _json_response(400, {"ok": False, "error": "Gross price must be greater than 0."})
+    if not (min_size > 0):
+        return _json_response(400, {"ok": False, "error": "Min size must be greater than 0."})
+    if not (max_size > 0):
+        return _json_response(400, {"ok": False, "error": "Max size must be greater than 0."})
+    if min_size > max_size:
+        return _json_response(400, {"ok": False, "error": "Min size must be <= max size."})
+    if not structure:
+        return _json_response(400, {"ok": False, "error": "Select at least one structure."})
+    if not company_id:
+        return _json_response(400, {"ok": False, "error": "Missing company."})
+
+    try:
+        _send_bid_email(email, company_id, company_name, gross, min_size, max_size, structure)
+    except Exception as e:
+        return _json_response(500, {"ok": False, "error": "Could not send. Try again."})
+
+    return _json_response(200, {"ok": True})
+
+
+def _render_page(event):
     company_id = _q(event, "bid") or ""
     company_name = _q(event, "name") or ""
+    sso = _q(event, "sso") or ""
 
     safe_name = html.escape(company_name) if company_name else "this company"
     safe_id = html.escape(company_id)
+    safe_sso = html.escape(sso)
 
     page = f"""<!DOCTYPE html>
 <html lang="en">
@@ -50,6 +183,7 @@ def lambda_handler(event, context):
     padding: 14px; border-radius: 8px; font-size: 15px; font-weight: 600; cursor: pointer;
   }}
   button:hover {{ background: #333; }}
+  button:disabled {{ background: #9ca3af; cursor: default; }}
   .overlay {{
     display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5);
     align-items: center; justify-content: center;
@@ -87,7 +221,7 @@ def lambda_handler(event, context):
     </div>
 
     <p id="err" style="color:#b91c1c;font-size:13px;margin:16px 0 0;display:none;"></p>
-    <button onclick="submitBid()">Submit firm bid</button>
+    <button id="submitBtn" onclick="submitBid()">Submit firm bid</button>
   </div>
 
   <div class="overlay" id="overlay">
@@ -100,6 +234,7 @@ def lambda_handler(event, context):
   <script>
     var COMPANY_ID = "{safe_id}";
     var COMPANY_NAME = "{safe_name}";
+    var SSO = "{safe_sso}";
 
     function showErr(msg) {{
       var e = document.getElementById('err');
@@ -120,17 +255,38 @@ def lambda_handler(event, context):
       if (structure.length === 0) {{ showErr('Select at least one structure.'); return; }}
 
       document.getElementById('err').style.display = 'none';
+      var btn = document.getElementById('submitBtn');
+      btn.disabled = true;
+      btn.textContent = 'Submitting…';
 
-      var payload = {{
-        company_id: COMPANY_ID,
-        company_name: COMPANY_NAME,
-        gross: gross,
-        min_size: minSize,
-        max_size: maxSize,
-        structure: structure
-      }};
-      console.log('bid payload (validated, not yet sent):', payload);
-      document.getElementById('overlay').classList.add('show');
+      fetch(window.location.pathname, {{
+        method: 'POST',
+        headers: {{ 'Content-Type': 'application/json' }},
+        body: JSON.stringify({{
+          company_id: COMPANY_ID,
+          company_name: COMPANY_NAME,
+          gross: gross,
+          min_size: minSize,
+          max_size: maxSize,
+          structure: structure,
+          sso: SSO
+        }})
+      }})
+      .then(function(r) {{ return r.json().then(function(j) {{ return {{ status: r.status, body: j }}; }}); }})
+      .then(function(res) {{
+        if (res.status === 200 && res.body.ok) {{
+          document.getElementById('overlay').classList.add('show');
+        }} else {{
+          btn.disabled = false;
+          btn.textContent = 'Submit firm bid';
+          showErr(res.body.error || 'Something went wrong. Try again.');
+        }}
+      }})
+      .catch(function() {{
+        btn.disabled = false;
+        btn.textContent = 'Submit firm bid';
+        showErr('Network error. Try again.');
+      }});
     }}
   </script>
 </body>
@@ -141,3 +297,9 @@ def lambda_handler(event, context):
         "headers": {"Content-Type": "text/html"},
         "body": page,
     }
+
+
+def lambda_handler(event, context):
+    if _method(event) == "POST":
+        return _handle_post(event)
+    return _render_page(event)
