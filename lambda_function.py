@@ -24,6 +24,20 @@ def _q(event, key):
     return (event.get("queryStringParameters") or {}).get(key)
 
 
+def _lookup_pricing(company_id):
+    """Read directory_companies.json (small) and return the pricing entry for
+    this company_id, or {} on any miss. Never raises."""
+    if not company_id:
+        return {}
+    try:
+        s3 = boto3.client("s3")
+        obj = s3.get_object(Bucket="full-pipeline-cache", Key="directory_companies.json")
+        data = json.loads(obj["Body"].read().decode("utf-8"))
+        return (data.get("pricing") or {}).get(str(company_id)) or {}
+    except Exception:
+        return {}
+
+
 def _method(event):
     """HTTP method from a Function URL (payload v2) event."""
     return (((event.get("requestContext") or {}).get("http") or {}).get("method")
@@ -147,6 +161,20 @@ def _render_page(event):
     safe_id = html.escape(company_id)
     safe_sso = html.escape(sso)
 
+    # Market-price nudge (from directory_companies.json). Rounded, vague label,
+    # shown only when a market reference exists.
+    _pricing = _lookup_pricing(company_id)
+    _market = _pricing.get("market")
+    if _market:
+        _market_html = (
+            f'<div style="background:#f0f4f8;border-radius:8px;padding:14px 16px;'
+            f'margin:20px 0 4px;font-size:14px;">'
+            f'<strong>Market reference: ~${round(float(_market)):,}/share.</strong> '
+            f'Below-market bids are likely to be ignored.</div>'
+        )
+    else:
+        _market_html = ""
+
     page = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -197,7 +225,8 @@ def _render_page(event):
 <body>
   <div class="card">
     <h1>Place a bid on {safe_name}</h1>
-    <p class="sub">We don't currently have a live seller for {safe_name}. Submit a firm bid and we'll notify you if a match comes up.</p>
+    <p class="sub">We don't currently have a live seller for {safe_name}, but we're in touch with holders. Send your firm bid and we'll take it to them — we'll alert you if it's accepted.</p>
+    {_market_html}
 
     <label>Gross price per share <span class="hint">(USD)</span></label>
     <input id="gross" type="number" step="0.01" min="0" placeholder="e.g. 45.00">
@@ -276,6 +305,7 @@ def _render_page(event):
       .then(function(res) {{
         if (res.status === 200 && res.body.ok) {{
           document.getElementById('overlay').classList.add('show');
+          setTimeout(function() {{ window.location.href = 'https://trades.graciagroup.com'; }}, 2500);
         }} else {{
           btn.disabled = false;
           btn.textContent = 'Submit firm bid';
