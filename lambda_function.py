@@ -86,6 +86,7 @@ def lambda_handler(event, context):
       <label><input type="checkbox" class="struct-box" value="Forward"> Forward</label>
     </div>
 
+    <p id="err" style="color:#b91c1c;font-size:13px;margin:16px 0 0;display:none;"></p>
     <button onclick="submitBid()">Submit firm bid</button>
   </div>
 
@@ -100,16 +101,35 @@ def lambda_handler(event, context):
     var COMPANY_ID = "{safe_id}";
     var COMPANY_NAME = "{safe_name}";
 
+    function showErr(msg) {{
+      var e = document.getElementById('err');
+      e.textContent = msg;
+      e.style.display = 'block';
+    }}
+
     function submitBid() {{
+      var gross = parseFloat(document.getElementById('gross').value);
+      var minSize = parseFloat(document.getElementById('min_size').value);
+      var maxSize = parseFloat(document.getElementById('max_size').value);
+      var structure = Array.prototype.slice.call(document.querySelectorAll('.struct-box:checked')).map(function(b) {{ return b.value; }});
+
+      if (!(gross > 0)) {{ showErr('Enter a gross price per share greater than 0.'); return; }}
+      if (!(minSize > 0)) {{ showErr('Enter a minimum size greater than 0.'); return; }}
+      if (!(maxSize > 0)) {{ showErr('Enter a maximum size greater than 0.'); return; }}
+      if (minSize > maxSize) {{ showErr('Minimum size must be less than or equal to maximum size.'); return; }}
+      if (structure.length === 0) {{ showErr('Select at least one structure.'); return; }}
+
+      document.getElementById('err').style.display = 'none';
+
       var payload = {{
         company_id: COMPANY_ID,
         company_name: COMPANY_NAME,
-        gross: document.getElementById('gross').value,
-        min_size: document.getElementById('min_size').value,
-        max_size: document.getElementById('max_size').value,
-        structure: Array.prototype.slice.call(document.querySelectorAll('.struct-box:checked')).map(function(b) {{ return b.value; }})
+        gross: gross,
+        min_size: minSize,
+        max_size: maxSize,
+        structure: structure
       }};
-      console.log('bid payload (not yet sent):', payload);
+      console.log('bid payload (validated, not yet sent):', payload);
       document.getElementById('overlay').classList.add('show');
     }}
   </script>
