@@ -176,7 +176,7 @@ def _render_page(event):
     company_name = _q(event, "name") or ""
     sso = _q(event, "sso") or ""
 
-    safe_name = html.escape(company_name) if company_name else "this company"
+    safe_name = html.escape(company_name.title()) if company_name else "this company"
     safe_id = html.escape(company_id)
     safe_sso = html.escape(sso)
 
