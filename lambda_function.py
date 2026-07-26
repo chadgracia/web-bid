@@ -227,30 +227,8 @@ def _render_page(event):
     # so we still get pricing + the correct display name.
     if company_param and not company_id:
         rid, rname, _ = _resolve_company_by_name(company_param)
-        if not rid:
-            # Unknown company name — do NOT show a bid form. Show a short notice.
-            safe_q = html.escape(company_param)
-            notice = f"""<!DOCTYPE html>
-<html lang="en"><head><meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Company not found</title>
-<style>
-  body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    background: #f5f5f5; color: #1a1a1a; margin: 0; padding: 24px; font-size: 14px; line-height: 1.5; }}
-  .card {{ background: #fff; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);
-    max-width: 560px; margin: 48px auto; padding: 32px; }}
-  h1 {{ font-size: 20px; margin: 0 0 8px; }}
-  p {{ color: #6b7280; margin: 0 0 8px; }}
-  a {{ color: #1a1a1a; }}
-</style></head>
-<body><div class="card">
-  <h1>We don't currently cover {safe_q}</h1>
-  <p>We couldn't find that company in our system. If you're interested in it, email
-  <a href="mailto:cgracia@rainmakersecurities.com">cgracia@rainmakersecurities.com</a> and we'll take a look.</p>
-</div></body></html>"""
-            return {"statusCode": 200, "headers": {"Content-Type": "text/html"}, "body": notice}
-        company_id = rid
-        company_name = rname
+        company_id = rid or company_id
+        company_name = rname or company_param
 
     safe_name = html.escape(company_name) if company_name else "this company"
     safe_id = html.escape(company_id)
@@ -262,9 +240,9 @@ def _render_page(event):
     _market = _pricing.get("market")
     if _market:
         _market_html = (
-            f'<div style="flex:0 0 auto;font-size:12px;color:#6b7280;'
+            f'<div style="flex:0 0 auto;font-size:12px;color:var(--text-secondary);'
             f'line-height:1.35;padding-top:2px;">'
-            f'<span style="color:#1a1a1a;font-weight:600;">Market ~${round(float(_market)):,}/share</span><br>'
+            f'<span style="color:var(--ink);font-weight:600;">Market ~${round(float(_market)):,}/share</span><br>'
             f'Below-market bids may be ignored.</div>'
         )
     else:
@@ -281,9 +259,9 @@ def _render_page(event):
     if is_anonymous:
         _contact_html = (
             '<div class="row" style="margin-top:18px;">'
-            '<div><label>Your first name</label>'
+            '<div><div class="fieldlabel">Your first name</div>'
             '<input id="submitter_name" type="text" placeholder="First name"></div>'
-            '<div><label>Your email</label>'
+            '<div><div class="fieldlabel">Your email</div>'
             '<input id="submitter_email" type="email" placeholder="you@example.com"></div>'
             '</div>'
         )
@@ -312,45 +290,29 @@ def _render_page(event):
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Place a Bid — {safe_name}</title>
+<link rel="stylesheet" href="https://s3.us-east-1.amazonaws.com/main.css/master.css">
 <style>
+  /* Only local layout not covered by master.css — colors/fonts/inputs/buttons
+     all inherit from master.css design tokens. */
   * {{ box-sizing: border-box; }}
-  body {{
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    background: #f5f5f5; color: #1a1a1a; margin: 0; padding: 24px;
-    font-size: 14px; line-height: 1.5;
-  }}
-  .card {{
-    background: #fff; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);
-    max-width: 560px; margin: 24px auto; padding: 32px;
-  }}
-  h1 {{ font-size: 22px; margin: 0 0 4px; }}
-  .sub {{ color: #6b7280; margin: 0 0 24px; font-size: 14px; }}
-  label {{ display: block; font-weight: 600; margin: 18px 0 6px; }}
-  .hint {{ font-weight: 400; color: #9ca3af; font-size: 12px; }}
-  input, select {{
-    width: 100%; padding: 11px 12px; border: 1px solid #d1d5db;
-    border-radius: 8px; font-size: 15px; font-family: inherit; background: #fff;
-  }}
-  input:focus, select:focus {{ outline: none; border-color: #1a1a1a; }}
+  body {{ padding: 24px; }}
+  .card {{ max-width: 560px; margin: 24px auto; padding: 32px; }}
+  .card h1 {{ font-size: 22px; margin: 0 0 4px; }}
+  .sub {{ color: var(--text-secondary); margin: 0 0 24px; font-size: 14px; }}
+  .hint {{ font-weight: 400; color: var(--text-muted); font-size: 12px; }}
+  .fieldlabel {{ display: block; font-weight: 600; color: var(--text-secondary); margin: 18px 0 6px; font-size: 13px; }}
   .row {{ display: flex; gap: 12px; }}
   .row > div {{ flex: 1; }}
   .struct {{ display: flex; gap: 16px; margin-top: 6px; }}
-  .struct label {{ font-weight: 400; margin: 0; display: flex; align-items: center; gap: 6px; cursor: pointer; }}
-  .struct input {{ width: auto; }}
-  button {{
-    width: 100%; margin-top: 28px; background: #1a1a1a; color: #fff; border: none;
-    padding: 14px; border-radius: 8px; font-size: 15px; font-weight: 600; cursor: pointer;
-  }}
-  button:hover {{ background: #333; }}
-  button:disabled {{ background: #9ca3af; cursor: default; }}
+  #submitBtn {{ width: 100%; margin-top: 28px; padding: 14px; font-size: 15px; font-weight: 600; }}
   .overlay {{
-    display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5);
+    display: none; position: fixed; inset: 0; background: rgba(20,24,29,0.5);
     align-items: center; justify-content: center;
   }}
   .overlay.show {{ display: flex; }}
-  .modal {{ background: #fff; border-radius: 12px; max-width: 400px; padding: 32px; text-align: center; }}
-  .modal h2 {{ margin: 0 0 8px; font-size: 18px; }}
-  .modal p {{ color: #6b7280; margin: 0; }}
+  .modal {{ background: var(--surface); border-radius: var(--radius-lg); max-width: 400px; padding: 32px; text-align: center; box-shadow: var(--shadow); }}
+  .modal h2 {{ margin: 0 0 8px; font-size: 18px; color: var(--ink); }}
+  .modal p {{ color: var(--text-secondary); margin: 0; }}
 </style>
 </head>
 <body>
@@ -358,35 +320,35 @@ def _render_page(event):
     <h1>Place a bid on {safe_name}</h1>
     <p class="sub">{_holder_line}</p>
 
-    <label>Gross price per share <span class="hint">(USD)</span></label>
+    <div class="fieldlabel">Gross price per share <span class="hint">(USD)</span></div>
     <div style="display:flex;gap:12px;align-items:flex-start;">
       <input id="gross" type="number" step="0.01" min="0" placeholder="e.g. 45.00" style="flex:0 0 calc(50% - 6px);">
       {_market_html}
     </div>
-    <div id="impliedVal" style="font-size:12px;color:#6b7280;margin-top:6px;display:none;"></div>
+    <div id="impliedVal" style="font-size:12px;color:var(--text-secondary);margin-top:6px;display:none;"></div>
 
     <div class="row">
       <div>
-        <label>Min size <span class="hint">($)</span></label>
+        <div class="fieldlabel">Min size <span class="hint">($)</span></div>
         <input id="min_size" type="number" step="1000" min="0" placeholder="e.g. 250000">
       </div>
       <div>
-        <label>Max size <span class="hint">($)</span></label>
+        <div class="fieldlabel">Max size <span class="hint">($)</span></div>
         <input id="max_size" type="number" step="1000" min="0" placeholder="e.g. 1000000">
       </div>
     </div>
 
-    <label>Structure</label>
+    <div class="fieldlabel">Structure</div>
     <div class="struct">
-      <label><input type="checkbox" class="struct-box" value="Direct"> Direct</label>
-      <label><input type="checkbox" class="struct-box" value="Fund"> Fund / SPV</label>
-      <label><input type="checkbox" class="struct-box" value="Forward"> Forward</label>
+      <label class="checkbox-label"><input type="checkbox" class="struct-box" value="Direct"> Direct</label>
+      <label class="checkbox-label"><input type="checkbox" class="struct-box" value="Fund"> Fund / SPV</label>
+      <label class="checkbox-label"><input type="checkbox" class="struct-box" value="Forward"> Forward</label>
     </div>
 
     {_contact_html}
 
-    <p id="err" style="color:#b91c1c;font-size:13px;margin:16px 0 0;display:none;"></p>
-    <button id="submitBtn" onclick="submitBid()">Submit firm bid</button>
+    <p id="err" style="color:var(--neg);font-size:13px;margin:16px 0 0;display:none;"></p>
+    <button id="submitBtn" class="bid-button" onclick="submitBid()">Submit firm bid</button>
   </div>
 
   <div class="overlay" id="overlay">
