@@ -38,6 +38,25 @@ def _lookup_pricing(company_id):
         return {}
 
 
+def _lookup_holders(company_name):
+    """Read holder_counts.json and return the holder count for this company name
+    (case-insensitive), or None on any miss. Never raises."""
+    if not company_name:
+        return None
+    try:
+        s3 = boto3.client("s3")
+        obj = s3.get_object(Bucket="full-pipeline-cache", Key="holder_counts.json")
+        data = json.loads(obj["Body"].read().decode("utf-8"))
+        counts = data.get("counts") or {}
+        target = company_name.strip().lower()
+        for name, n in counts.items():
+            if name.strip().lower() == target:
+                return n
+        return None
+    except Exception:
+        return None
+
+
 def _method(event):
     """HTTP method from a Function URL (payload v2) event."""
     return (((event.get("requestContext") or {}).get("http") or {}).get("method")
@@ -175,6 +194,20 @@ def _render_page(event):
     else:
         _market_html = ""
 
+    # Holder count (from holder_counts.json, keyed by company name).
+    _holders = _lookup_holders(company_name)
+    if _holders and _holders > 0:
+        _holder_line = (
+            f"We don't currently have a live seller for {safe_name}, but "
+            f"<strong>{_holders:,} holders</strong> in our system hold it. "
+            f"Send your firm bid and we'll take it to them — we'll alert you if it's accepted."
+        )
+    else:
+        _holder_line = (
+            f"We don't currently have a live seller for {safe_name}, but we're in touch "
+            f"with holders. Send your firm bid and we'll take it to them — we'll alert you if it's accepted."
+        )
+
     page = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -225,7 +258,7 @@ def _render_page(event):
 <body>
   <div class="card">
     <h1>Place a bid on {safe_name}</h1>
-    <p class="sub">We don't currently have a live seller for {safe_name}, but we're in touch with holders. Send your firm bid and we'll take it to them — we'll alert you if it's accepted.</p>
+    <p class="sub">{_holder_line}</p>
 
     <label>Gross price per share <span class="hint">(USD)</span></label>
     <div style="display:flex;gap:12px;align-items:flex-start;">
