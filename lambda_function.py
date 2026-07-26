@@ -227,8 +227,30 @@ def _render_page(event):
     # so we still get pricing + the correct display name.
     if company_param and not company_id:
         rid, rname, _ = _resolve_company_by_name(company_param)
-        company_id = rid or company_id
-        company_name = rname or company_param
+        if not rid:
+            # Unknown company name — do NOT show a bid form. Show a short notice.
+            safe_q = html.escape(company_param)
+            notice = f"""<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Company not found</title>
+<style>
+  body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #f5f5f5; color: #1a1a1a; margin: 0; padding: 24px; font-size: 14px; line-height: 1.5; }}
+  .card {{ background: #fff; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    max-width: 560px; margin: 48px auto; padding: 32px; }}
+  h1 {{ font-size: 20px; margin: 0 0 8px; }}
+  p {{ color: #6b7280; margin: 0 0 8px; }}
+  a {{ color: #1a1a1a; }}
+</style></head>
+<body><div class="card">
+  <h1>We don't currently cover {safe_q}</h1>
+  <p>We couldn't find that company in our system. If you're interested in it, email
+  <a href="mailto:cgracia@rainmakersecurities.com">cgracia@rainmakersecurities.com</a> and we'll take a look.</p>
+</div></body></html>"""
+            return {"statusCode": 200, "headers": {"Content-Type": "text/html"}, "body": notice}
+        company_id = rid
+        company_name = rname
 
     safe_name = html.escape(company_name) if company_name else "this company"
     safe_id = html.escape(company_id)
