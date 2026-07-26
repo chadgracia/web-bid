@@ -248,6 +248,13 @@ def _render_page(event):
     else:
         _market_html = ""
 
+    # Last-round data for the live implied-valuation readout (JS computes on input).
+    # lr_val is in BILLIONS (0.9 = $900M).
+    _lr_pps = _pricing.get("lr_pps")
+    _lr_val = _pricing.get("lr_val")
+    _val_pps_js = float(_lr_pps) if isinstance(_lr_pps, (int, float)) else 0
+    _val_lrv_js = float(_lr_val) if isinstance(_lr_val, (int, float)) else 0
+
     # Anonymous contact fields — shown only when there is no valid logged-in token.
     if is_anonymous:
         _contact_html = (
@@ -334,6 +341,7 @@ def _render_page(event):
       <input id="gross" type="number" step="0.01" min="0" placeholder="e.g. 45.00" style="flex:0 0 calc(50% - 6px);">
       {_market_html}
     </div>
+    <div id="impliedVal" style="font-size:12px;color:#6b7280;margin-top:6px;display:none;"></div>
 
     <div class="row">
       <div>
@@ -368,6 +376,8 @@ def _render_page(event):
     var COMPANY_ID = "{safe_id}";
     var COMPANY_NAME = "{safe_name}";
     var SSO = "{safe_sso}";
+    var LR_PPS = {_val_pps_js};
+    var LR_VAL = {_val_lrv_js};
     var IS_ANONYMOUS = {is_anon_js};
 
     function showErr(msg) {{
@@ -375,6 +385,27 @@ def _render_page(event):
       e.textContent = msg;
       e.style.display = 'block';
     }}
+
+    function fmtVal(billions) {{
+      if (billions >= 1) {{
+        return '$' + billions.toFixed(1) + 'B';
+      }}
+      return '$' + Math.round(billions * 1000).toLocaleString() + 'M';
+    }}
+
+    function updateImplied() {{
+      var el = document.getElementById('impliedVal');
+      var price = parseFloat(document.getElementById('gross').value);
+      if (LR_PPS > 0 && LR_VAL > 0 && price > 0) {{
+        var implied = LR_VAL * (price / LR_PPS);
+        el.innerHTML = '≈ <strong>' + fmtVal(implied) + '</strong> implied valuation · based on last public round, estimate only';
+        el.style.display = 'block';
+      }} else {{
+        el.style.display = 'none';
+      }}
+    }}
+
+    document.getElementById('gross').addEventListener('input', updateImplied);
 
     function submitBid() {{
       var gross = parseFloat(document.getElementById('gross').value);
