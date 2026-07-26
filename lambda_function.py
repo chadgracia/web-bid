@@ -167,10 +167,10 @@ def _render_page(event):
     _market = _pricing.get("market")
     if _market:
         _market_html = (
-            f'<div style="background:#f0f4f8;border-radius:8px;padding:14px 16px;'
-            f'margin:20px 0 4px;font-size:14px;">'
-            f'<strong>Market reference: ~${round(float(_market)):,}/share.</strong> '
-            f'Below-market bids are likely to be ignored.</div>'
+            f'<div style="flex:0 0 auto;max-width:200px;font-size:12px;color:#6b7280;'
+            f'line-height:1.35;padding-top:2px;">'
+            f'<span style="color:#1a1a1a;font-weight:600;">Market ~${round(float(_market)):,}/share</span><br>'
+            f'Below-market bids may be ignored.</div>'
         )
     else:
         _market_html = ""
@@ -226,10 +226,12 @@ def _render_page(event):
   <div class="card">
     <h1>Place a bid on {safe_name}</h1>
     <p class="sub">We don't currently have a live seller for {safe_name}, but we're in touch with holders. Send your firm bid and we'll take it to them — we'll alert you if it's accepted.</p>
-    {_market_html}
 
     <label>Gross price per share <span class="hint">(USD)</span></label>
-    <input id="gross" type="number" step="0.01" min="0" placeholder="e.g. 45.00">
+    <div style="display:flex;gap:14px;align-items:flex-start;">
+      <input id="gross" type="number" step="0.01" min="0" placeholder="e.g. 45.00" style="flex:1;">
+      {_market_html}
+    </div>
 
     <div class="row">
       <div>
