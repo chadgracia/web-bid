@@ -57,6 +57,32 @@ def _lookup_holders(company_name):
         return None
 
 
+def _resolve_company_by_name(name):
+    """Anonymous entry: given a company NAME, find its directory entry.
+    Returns (company_id, display_name, pricing_entry) or ("", name, {}).
+    Case-insensitive match against the pricing map's stored names. Never raises."""
+    if not name:
+        return "", "", {}
+    try:
+        s3 = boto3.client("s3")
+        obj = s3.get_object(Bucket="full-pipeline-cache", Key="directory_companies.json")
+        data = json.loads(obj["Body"].read().decode("utf-8"))
+        pricing = data.get("pricing") or {}
+        target = name.strip().lower()
+        for cid, entry in pricing.items():
+            if (entry.get("name") or "").strip().lower() == target:
+                return str(cid), entry.get("name") or name, entry
+        return "", name, {}
+    except Exception:
+        return "", name, {}
+
+
+def _valid_email(s):
+    """Very light email sanity check."""
+    s = (s or "").strip()
+    return "@" in s and "." in s.split("@")[-1] and len(s) >= 6
+
+
 def _method(event):
     """HTTP method from a Function URL (payload v2) event."""
     return (((event.get("requestContext") or {}).get("http") or {}).get("method")
@@ -92,15 +118,20 @@ def _json_response(status, obj):
     }
 
 
-def _send_bid_email(email, company_id, company_name, gross, min_size, max_size, structure):
+def _send_bid_email(email, company_id, company_name, gross, min_size, max_size,
+                    structure, source="logged-in", submitter_name=""):
     """Email the bid to Chad. No Pipeline write yet — this is the safe first step."""
     ses = boto3.client("ses", region_name="us-east-1")
     struct_txt = ", ".join(structure) if structure else "(none)"
     subject = f"New web bid: {company_name} @ ${gross}/sh"
+    if source == "anonymous":
+        who = f"Anonymous lead: {submitter_name} <{email}>"
+    else:
+        who = f"Logged-in user: {email}"
     body = (
         f"A firm buy bid was submitted through the web-bid page.\n\n"
         f"Company:      {company_name} (id {company_id})\n"
-        f"Bidder:       {email}\n"
+        f"Bidder:       {who}\n"
         f"Gross price:  ${gross}/share\n"
         f"Min size:     ${min_size}\n"
         f"Max size:     ${max_size}\n"
@@ -131,10 +162,20 @@ def _handle_post(event):
     except Exception:
         return _json_response(400, {"ok": False, "error": "Bad request."})
 
+    # Identity: either a valid handoff token (logged-in trades user) OR a
+    # submitted first name + email (anonymous lead arriving from an email link).
     email = _verify_handoff_token(data.get("sso") or "")
+    submitter_name = ""
+    source = "logged-in"
     if not email:
-        return _json_response(401, {"ok": False,
-                                    "error": "Please open this from the trades page while logged in."})
+        submitter_name = str(data.get("submitter_name") or "").strip()
+        submitter_email = str(data.get("submitter_email") or "").strip()
+        if not submitter_name:
+            return _json_response(400, {"ok": False, "error": "Please enter your first name."})
+        if not _valid_email(submitter_email):
+            return _json_response(400, {"ok": False, "error": "Please enter a valid email."})
+        email = submitter_email
+        source = "anonymous"
 
     try:
         gross = float(data.get("gross"))
@@ -164,7 +205,8 @@ def _handle_post(event):
         return _json_response(400, {"ok": False, "error": "Missing company."})
 
     try:
-        _send_bid_email(email, company_id, company_name, gross, min_size, max_size, structure)
+        _send_bid_email(email, company_id, company_name, gross, min_size, max_size,
+                        structure, source=source, submitter_name=submitter_name)
     except Exception as e:
         return _json_response(500, {"ok": False, "error": "Could not send. Try again."})
 
@@ -175,8 +217,20 @@ def _render_page(event):
     company_id = _q(event, "bid") or ""
     company_name = _q(event, "name") or ""
     sso = _q(event, "sso") or ""
+    company_param = _q(event, "company") or ""
 
-    safe_name = html.escape(company_name.title()) if company_name else "this company"
+    # Identity: a VALID handoff token means logged-in; otherwise anonymous.
+    _verified_email = _verify_handoff_token(sso)
+    is_anonymous = _verified_email is None
+
+    # Anonymous entry via ?company=Name (no id): resolve name -> directory entry
+    # so we still get pricing + the correct display name.
+    if company_param and not company_id:
+        rid, rname, _ = _resolve_company_by_name(company_param)
+        company_id = rid or company_id
+        company_name = rname or company_param
+
+    safe_name = html.escape(company_name) if company_name else "this company"
     safe_id = html.escape(company_id)
     safe_sso = html.escape(sso)
 
@@ -194,6 +248,17 @@ def _render_page(event):
     else:
         _market_html = ""
 
+    # Anonymous contact fields — shown only when there is no valid logged-in token.
+    if is_anonymous:
+        _contact_html = (
+            '<label>Your first name</label>'
+            '<input id="submitter_name" type="text" placeholder="First name">'
+            '<label>Your email</label>'
+            '<input id="submitter_email" type="email" placeholder="you@example.com">'
+        )
+    else:
+        _contact_html = ""
+
     # Holder count (from holder_counts.json, keyed by company name).
     _holders = _lookup_holders(company_name)
     if _holders and _holders > 0:
@@ -207,6 +272,8 @@ def _render_page(event):
             f"We don't currently have an active seller for {safe_name}, but we're in touch "
             f"with holders. Send your firm bid and we'll let you know if any of them accept it."
         )
+
+    is_anon_js = "true" if is_anonymous else "false"
 
     page = f"""<!DOCTYPE html>
 <html lang="en">
@@ -260,6 +327,8 @@ def _render_page(event):
     <h1>Place a bid on {safe_name}</h1>
     <p class="sub">{_holder_line}</p>
 
+    {_contact_html}
+
     <label>Gross price per share <span class="hint">(USD)</span></label>
     <div style="display:flex;gap:12px;align-items:flex-start;">
       <input id="gross" type="number" step="0.01" min="0" placeholder="e.g. 45.00" style="flex:0 0 calc(50% - 6px);">
@@ -299,6 +368,7 @@ def _render_page(event):
     var COMPANY_ID = "{safe_id}";
     var COMPANY_NAME = "{safe_name}";
     var SSO = "{safe_sso}";
+    var IS_ANONYMOUS = {is_anon_js};
 
     function showErr(msg) {{
       var e = document.getElementById('err');
@@ -318,6 +388,16 @@ def _render_page(event):
       if (minSize > maxSize) {{ showErr('Minimum size must be less than or equal to maximum size.'); return; }}
       if (structure.length === 0) {{ showErr('Select at least one structure.'); return; }}
 
+      var subName = "", subEmail = "";
+      if (IS_ANONYMOUS) {{
+        var nEl = document.getElementById('submitter_name');
+        var eEl = document.getElementById('submitter_email');
+        subName = nEl ? nEl.value.trim() : "";
+        subEmail = eEl ? eEl.value.trim() : "";
+        if (!subName) {{ showErr('Enter your first name.'); return; }}
+        if (subEmail.indexOf('@') === -1) {{ showErr('Enter a valid email.'); return; }}
+      }}
+
       document.getElementById('err').style.display = 'none';
       var btn = document.getElementById('submitBtn');
       btn.disabled = true;
@@ -333,7 +413,9 @@ def _render_page(event):
           min_size: minSize,
           max_size: maxSize,
           structure: structure,
-          sso: SSO
+          sso: SSO,
+          submitter_name: subName,
+          submitter_email: subEmail
         }})
       }})
       .then(function(r) {{ return r.json().then(function(j) {{ return {{ status: r.status, body: j }}; }}); }})
