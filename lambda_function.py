@@ -255,13 +255,15 @@ def _render_page(event):
     _val_pps_js = float(_lr_pps) if isinstance(_lr_pps, (int, float)) else 0
     _val_lrv_js = float(_lr_val) if isinstance(_lr_val, (int, float)) else 0
 
-    # Anonymous contact fields — shown only when there is no valid logged-in token.
+    # Anonymous contact fields (side by side) — shown only when no valid logged-in token.
     if is_anonymous:
         _contact_html = (
-            '<label>Your first name</label>'
-            '<input id="submitter_name" type="text" placeholder="First name">'
-            '<label>Your email</label>'
-            '<input id="submitter_email" type="email" placeholder="you@example.com">'
+            '<div class="row" style="margin-top:18px;">'
+            '<div><label>Your first name</label>'
+            '<input id="submitter_name" type="text" placeholder="First name"></div>'
+            '<div><label>Your email</label>'
+            '<input id="submitter_email" type="email" placeholder="you@example.com"></div>'
+            '</div>'
         )
     else:
         _contact_html = ""
@@ -334,8 +336,6 @@ def _render_page(event):
     <h1>Place a bid on {safe_name}</h1>
     <p class="sub">{_holder_line}</p>
 
-    {_contact_html}
-
     <label>Gross price per share <span class="hint">(USD)</span></label>
     <div style="display:flex;gap:12px;align-items:flex-start;">
       <input id="gross" type="number" step="0.01" min="0" placeholder="e.g. 45.00" style="flex:0 0 calc(50% - 6px);">
@@ -360,6 +360,8 @@ def _render_page(event):
       <label><input type="checkbox" class="struct-box" value="Fund"> Fund / SPV</label>
       <label><input type="checkbox" class="struct-box" value="Forward"> Forward</label>
     </div>
+
+    {_contact_html}
 
     <p id="err" style="color:#b91c1c;font-size:13px;margin:16px 0 0;display:none;"></p>
     <button id="submitBtn" onclick="submitBid()">Submit firm bid</button>
