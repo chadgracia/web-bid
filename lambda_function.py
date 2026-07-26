@@ -186,7 +186,7 @@ def _render_page(event):
     _market = _pricing.get("market")
     if _market:
         _market_html = (
-            f'<div style="flex:0 0 auto;max-width:200px;font-size:12px;color:#6b7280;'
+            f'<div style="flex:0 0 auto;font-size:12px;color:#6b7280;'
             f'line-height:1.35;padding-top:2px;">'
             f'<span style="color:#1a1a1a;font-weight:600;">Market ~${round(float(_market)):,}/share</span><br>'
             f'Below-market bids may be ignored.</div>'
