@@ -198,14 +198,14 @@ def _render_page(event):
     _holders = _lookup_holders(company_name)
     if _holders and _holders > 0:
         _holder_line = (
-            f"We don't currently have a live seller for {safe_name}, but "
-            f"<strong>{_holders:,} holders</strong> in our system hold it. "
-            f"Send your firm bid and we'll take it to them — we'll alert you if it's accepted."
+            f"We don't currently have an active seller for {safe_name}, but "
+            f"<strong>{_holders:,} holders</strong> in our system have shares. "
+            f"Send your firm bid and we'll let you know if any of them accept it."
         )
     else:
         _holder_line = (
-            f"We don't currently have a live seller for {safe_name}, but we're in touch "
-            f"with holders. Send your firm bid and we'll take it to them — we'll alert you if it's accepted."
+            f"We don't currently have an active seller for {safe_name}, but we're in touch "
+            f"with holders. Send your firm bid and we'll let you know if any of them accept it."
         )
 
     page = f"""<!DOCTYPE html>
