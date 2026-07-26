@@ -228,8 +228,8 @@ def _render_page(event):
     <p class="sub">We don't currently have a live seller for {safe_name}, but we're in touch with holders. Send your firm bid and we'll take it to them — we'll alert you if it's accepted.</p>
 
     <label>Gross price per share <span class="hint">(USD)</span></label>
-    <div style="display:flex;gap:14px;align-items:flex-start;">
-      <input id="gross" type="number" step="0.01" min="0" placeholder="e.g. 45.00" style="flex:1;">
+    <div style="display:flex;gap:12px;align-items:flex-start;">
+      <input id="gross" type="number" step="0.01" min="0" placeholder="e.g. 45.00" style="flex:0 0 calc(50% - 6px);">
       {_market_html}
     </div>
 
