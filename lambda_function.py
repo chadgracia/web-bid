@@ -229,6 +229,10 @@ def _render_page(event):
         rid, rname, _ = _resolve_company_by_name(company_param)
         company_id = rid or company_id
         company_name = rname or company_param
+    elif company_name and not company_id:
+        rid, rname, _ = _resolve_company_by_name(company_name)
+        company_id = rid or company_id
+        company_name = rname or company_name
 
     safe_name = html.escape(company_name) if company_name else "this company"
     safe_id = html.escape(company_id)
