@@ -330,11 +330,11 @@ def _render_page(event):
     <div class="row">
       <div>
         <div class="fieldlabel">Min size <span class="hint">($)</span></div>
-        <input id="min_size" type="number" step="1000" min="0" placeholder="e.g. 250000">
+        <input id="min_size" type="text" inputmode="numeric" autocomplete="off" placeholder="e.g. 250,000">
       </div>
       <div>
         <div class="fieldlabel">Max size <span class="hint">($)</span></div>
-        <input id="max_size" type="number" step="1000" min="0" placeholder="e.g. 1000000">
+        <input id="max_size" type="text" inputmode="numeric" autocomplete="off" placeholder="e.g. 1,000,000">
       </div>
     </div>
 
@@ -393,10 +393,35 @@ def _render_page(event):
 
     document.getElementById('gross').addEventListener('input', updateImplied);
 
+    function sizeDigits(el) {{
+      return (el.value || '').replace(/[^0-9]/g, '');
+    }}
+    function sizeWords(n) {{
+      if (!(n > 0)) {{ return ''; }}
+      if (n >= 1000000) {{
+        var m = n / 1000000;
+        return '$' + (m % 1 === 0 ? m.toFixed(0) : m.toFixed(2).replace(/0+$/, '').replace(/\\.$/, '')) + 'M';
+      }}
+      if (n >= 1000) {{ return '$' + Math.round(n / 1000) + 'K'; }}
+      return '$' + n;
+    }}
+    ['min_size', 'max_size'].forEach(function (id) {{
+      var el = document.getElementById(id);
+      if (!el) {{ return; }}
+      var hint = document.createElement('div');
+      hint.style.cssText = 'font-size:12px;color:var(--text-secondary);margin-top:4px;min-height:16px;';
+      el.parentNode.appendChild(hint);
+      el.addEventListener('input', function () {{
+        var d = sizeDigits(el);
+        el.value = d ? Number(d).toLocaleString('en-US') : '';
+        hint.textContent = sizeWords(Number(d));
+      }});
+    }});
+
     function submitBid() {{
       var gross = parseFloat(document.getElementById('gross').value);
-      var minSize = parseFloat(document.getElementById('min_size').value);
-      var maxSize = parseFloat(document.getElementById('max_size').value);
+      var minSize = parseFloat((document.getElementById('min_size').value || '').replace(/,/g, ''));
+      var maxSize = parseFloat((document.getElementById('max_size').value || '').replace(/,/g, ''));
       var structure = Array.prototype.slice.call(document.querySelectorAll('.struct-box:checked')).map(function(b) {{ return b.value; }});
 
       if (!(gross > 0)) {{ showErr('Enter a gross price per share greater than 0.'); return; }}
