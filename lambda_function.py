@@ -119,17 +119,18 @@ def _json_response(status, obj):
 
 
 def _send_bid_email(email, company_id, company_name, gross, min_size, max_size,
-                    structure, source="logged-in", submitter_name=""):
-    """Email the bid to Chad. No Pipeline write yet — this is the safe first step."""
+                    structure, source="logged-in", submitter_name="", side="buy"):
+    """Email the bid or offer to Chad. No Pipeline write yet — this is the safe first step."""
     ses = boto3.client("ses", region_name="us-east-1")
     struct_txt = ", ".join(structure) if structure else "(none)"
-    subject = f"New web bid: {company_name} @ ${gross}/sh"
+    _word = "offer" if side == "sell" else "bid"
+    subject = f"New web {_word}: {company_name} @ ${gross}/sh"
     if source == "anonymous":
         who = f"Anonymous lead: {submitter_name} <{email}>"
     else:
         who = f"Logged-in user: {email}"
     body = (
-        f"A firm buy bid was submitted through the web-bid page.\n\n"
+        f"A firm {'sell offer' if side == 'sell' else 'buy bid'} was submitted through the web-bid page.\n\n"
         f"Company:      {company_name} (id {company_id})\n"
         f"Bidder:       {who}\n"
         f"Gross price:  ${gross}/share\n"
@@ -151,6 +152,8 @@ def _send_bid_email(email, company_id, company_name, gross, min_size, max_size,
 
 def _handle_post(event):
     """Process a submitted bid. Requires a valid handoff token (sso)."""
+    _side = (_q(event, "side") or "").strip().lower()
+    _side = "sell" if _side == "sell" else "buy"
     raw = event.get("body") or "{}"
     if event.get("isBase64Encoded"):
         try:
@@ -206,7 +209,7 @@ def _handle_post(event):
 
     try:
         _send_bid_email(email, company_id, company_name, gross, min_size, max_size,
-                        structure, source=source, submitter_name=submitter_name)
+                        structure, source=source, submitter_name=submitter_name, side=_side)
     except Exception as e:
         return _json_response(500, {"ok": False, "error": "Could not send. Try again."})
 
@@ -218,6 +221,10 @@ def _render_page(event):
     company_name = _q(event, "name") or ""
     sso = _q(event, "sso") or ""
     company_param = _q(event, "company") or ""
+    side = "sell" if (_q(event, "side") or "").strip().lower() == "sell" else "buy"
+    is_sell = (side == "sell")
+    word = "offer" if is_sell else "bid"
+    Word = "Offer" if is_sell else "Bid"
 
     # Identity: a VALID handoff token means logged-in; otherwise anonymous.
     _verified_email = _verify_handoff_token(sso)
@@ -293,7 +300,7 @@ def _render_page(event):
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Place a Bid — {safe_name}</title>
+<title>Place {'an Offer' if is_sell else 'a Bid'} — {safe_name}</title>
 <link rel="stylesheet" href="https://s3.us-east-1.amazonaws.com/main.css/master.css">
 <style>
   /* Only local layout not covered by master.css — colors/fonts/inputs/buttons
@@ -321,7 +328,7 @@ def _render_page(event):
 </head>
 <body>
   <div class="card">
-    <h1>Place a bid on {safe_name}</h1>
+    <h1>Place {'an offer' if is_sell else 'a bid'} on {safe_name}</h1>
     <p class="sub">{_holder_line}</p>
 
     <div class="fieldlabel">Gross price per share <span class="hint">(USD)</span></div>
@@ -352,7 +359,7 @@ def _render_page(event):
     {_contact_html}
 
     <p id="err" style="color:var(--neg);font-size:13px;margin:16px 0 0;display:none;"></p>
-    <button id="submitBtn" class="bid-button" onclick="submitBid()">Submit firm bid</button>
+    <button id="submitBtn" class="bid-button" onclick="submitBid()">Submit firm {word}</button>
   </div>
 
   <div class="overlay" id="overlay">
@@ -449,7 +456,7 @@ def _render_page(event):
       btn.disabled = true;
       btn.textContent = 'Submitting…';
 
-      fetch(window.location.pathname, {{
+      fetch(window.location.pathname + window.location.search, {{
         method: 'POST',
         headers: {{ 'Content-Type': 'application/json' }},
         body: JSON.stringify({{
