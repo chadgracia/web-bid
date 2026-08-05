@@ -364,7 +364,7 @@ def _render_page(event):
 
   <div class="overlay" id="overlay">
     <div class="modal">
-      <h2>Bid received</h2>
+      <h2>{Word} received</h2>
       <p>Thanks — we'll be in touch.</p>
     </div>
   </div>
@@ -478,13 +478,13 @@ def _render_page(event):
           setTimeout(function() {{ window.location.href = 'https://trades.graciagroup.com'; }}, 2500);
         }} else {{
           btn.disabled = false;
-          btn.textContent = 'Submit firm bid';
+          btn.textContent = 'Submit firm {word}';
           showErr(res.body.error || 'Something went wrong. Try again.');
         }}
       }})
       .catch(function() {{
         btn.disabled = false;
-        btn.textContent = 'Submit firm bid';
+        btn.textContent = 'Submit firm {word}';
         showErr('Network error. Try again.');
       }});
     }}
