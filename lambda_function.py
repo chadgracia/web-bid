@@ -279,19 +279,26 @@ def _render_page(event):
     else:
         _contact_html = ""
 
-    # Holder count (from holder_counts.json, keyed by company name).
-    _holders = _lookup_holders(company_name)
-    if _holders and _holders > 0:
+    # Holder count (from holder_counts.json, keyed by company name). Buy side only —
+    # a seller cares about demand, not how many other holders exist.
+    if is_sell:
         _holder_line = (
-            f"We don't currently have an active seller for {safe_name}, but "
-            f"<strong>{_holders:,} holders</strong> in our system have shares. "
-            f"Send your firm bid and we'll let you know if any of them accept it."
+            f"We don't currently have a live bid on {safe_name}. Send us your firm ask "
+            f"and we'll circulate it to buyers in our network."
         )
     else:
-        _holder_line = (
-            f"We don't currently have an active seller for {safe_name}, but we're in touch "
-            f"with holders. Send your firm bid and we'll let you know if any of them accept it."
-        )
+        _holders = _lookup_holders(company_name)
+        if _holders and _holders > 0:
+            _holder_line = (
+                f"We don't currently have an active seller for {safe_name}, but "
+                f"<strong>{_holders:,} holders</strong> in our system have shares. "
+                f"Send your firm bid and we'll let you know if any of them accept it."
+            )
+        else:
+            _holder_line = (
+                f"We don't currently have an active seller for {safe_name}, but we're in touch "
+                f"with holders. Send your firm bid and we'll let you know if any of them accept it."
+            )
 
     is_anon_js = "true" if is_anonymous else "false"
 
