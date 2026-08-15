@@ -138,7 +138,8 @@ def _json_response(status, obj):
 
 
 def _send_bid_email(email, company_id, company_name, gross, min_size, max_size,
-                    structure, source="logged-in", submitter_name="", side="buy"):
+                    structure, source="logged-in", submitter_name="", side="buy",
+                    deal_id="", deal_px=""):
     """Email the bid or offer to Chad. No Pipeline write yet — this is the safe first step."""
     ses = boto3.client("ses", region_name="us-east-1")
     struct_txt = ", ".join(structure) if structure else "(none)"
@@ -155,7 +156,11 @@ def _send_bid_email(email, company_id, company_name, gross, min_size, max_size,
         f"Gross price:  ${gross}/share\n"
         f"Min size:     ${min_size}\n"
         f"Max size:     ${max_size}\n"
-        f"Structure:    {struct_txt}\n\n"
+        f"Structure:    {struct_txt}\n"
+        + (f"In response:  deal {deal_id}"
+           + (f" @ ${deal_px}/share" if deal_px else "") + "\n"
+           if deal_id else "")
+        + "\n"
         f"(No Pipeline deal was created — this is the email-only step.)\n"
     )
     ses.send_email(
@@ -226,9 +231,12 @@ def _handle_post(event):
     if not company_id:
         return _json_response(400, {"ok": False, "error": "Missing company."})
 
+    _resp_deal_id = (_q(event, "deal_id") or "").strip()
+    _resp_px = (_q(event, "px") or "").strip()
     try:
         _send_bid_email(email, company_id, company_name, gross, min_size, max_size,
-                        structure, source=source, submitter_name=submitter_name, side=_side)
+                        structure, source=source, submitter_name=submitter_name, side=_side,
+                        deal_id=_resp_deal_id, deal_px=_resp_px)
     except Exception as e:
         return _json_response(500, {"ok": False, "error": "Could not send. Try again."})
 
@@ -244,6 +252,13 @@ def _render_page(event):
     is_sell = (side == "sell")
     word = "offer" if is_sell else "bid"
     Word = "Offer" if is_sell else "Bid"
+    _deal_id = (_q(event, "deal_id") or "").strip()
+    try:
+        _deal_px = float((_q(event, "px") or "").replace(",", "").replace("$", ""))
+        if not (_deal_px > 0):
+            _deal_px = None
+    except (ValueError, TypeError):
+        _deal_px = None
 
     # Identity: a VALID handoff token means logged-in; otherwise anonymous.
     _verified_email = _verify_handoff_token(sso)
@@ -268,7 +283,15 @@ def _render_page(event):
     # shown only when a market reference exists.
     _pricing = _lookup_pricing(company_id)
     _market = _pricing.get("market")
-    if _market:
+    if _deal_px:
+        _market_html = (
+            f'<div style="flex:0 0 auto;font-size:12px;color:var(--text-secondary);'
+            f'line-height:1.35;padding-top:2px;">'
+            f'<span style="color:var(--ink);font-weight:600;">'
+            f'Live {"bid" if is_sell else "offer"} at ${_deal_px:,.2f}/share</span><br>'
+            f'{"Asks above the bid may be ignored." if is_sell else "Bids below the ask may be ignored."}</div>'
+        )
+    elif _market:
         _market_html = (
             f'<div style="flex:0 0 auto;font-size:12px;color:var(--text-secondary);'
             f'line-height:1.35;padding-top:2px;">'
@@ -300,7 +323,13 @@ def _render_page(event):
 
     # Holder count (from holder_counts.json, keyed by company name). Buy side only —
     # a seller cares about demand, not how many other holders exist.
-    if is_sell:
+    if _deal_id:
+        _px_txt = f" at ${_deal_px:,.2f}/share" if _deal_px else ""
+        _holder_line = (
+            f"You're responding to a live {'bid' if is_sell else 'offer'} on {safe_name}"
+            f"{_px_txt}. Submit your firm {word} below."
+        )
+    elif is_sell:
         _buyers = _lookup_buy_interest(company_name)
         if _buyers and _buyers > 0:
             _holder_line = (
