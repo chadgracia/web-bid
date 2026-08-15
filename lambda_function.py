@@ -335,7 +335,7 @@ def _render_page(event):
 </head>
 <body>
   <div class="card">
-    <h1>Place {'an offer' if is_sell else 'a bid'} on {safe_name}</h1>
+    <h1>{'Offer to Sell' if is_sell else 'Bid for'} {safe_name}</h1>
     <p class="sub">{_holder_line}</p>
 
     <div class="fieldlabel">Gross price per share <span class="hint">(USD)</span></div>
