@@ -254,7 +254,7 @@ def _render_page(event):
             f'<div style="flex:0 0 auto;font-size:12px;color:var(--text-secondary);'
             f'line-height:1.35;padding-top:2px;">'
             f'<span style="color:var(--ink);font-weight:600;">Market ~${round(float(_market)):,}/share</span><br>'
-            f'Below-market bids may be ignored.</div>'
+            f'{"Asks well above market may be ignored." if is_sell else "Below-market bids may be ignored."}</div>'
         )
     else:
         _market_html = ""
