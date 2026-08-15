@@ -57,6 +57,25 @@ def _lookup_holders(company_name):
         return None
 
 
+def _lookup_buy_interest(company_name):
+    """Read interest_people.json and return the number of buy-interest people
+    for this company name (case-insensitive), or None on any miss. Never raises."""
+    if not company_name:
+        return None
+    try:
+        s3 = boto3.client("s3")
+        obj = s3.get_object(Bucket="full-pipeline-cache", Key="interest_people.json")
+        data = json.loads(obj["Body"].read().decode("utf-8"))
+        buy = data.get("buy") or {}
+        target = company_name.strip().lower()
+        for name, ids in buy.items():
+            if name.strip().lower() == target and isinstance(ids, list):
+                return len(ids)
+        return None
+    except Exception:
+        return None
+
+
 def _resolve_company_by_name(name):
     """Anonymous entry: given a company NAME, find its directory entry.
     Returns (company_id, display_name, pricing_entry) or ("", name, {}).
@@ -282,10 +301,17 @@ def _render_page(event):
     # Holder count (from holder_counts.json, keyed by company name). Buy side only —
     # a seller cares about demand, not how many other holders exist.
     if is_sell:
-        _holder_line = (
-            f"We don't currently have a live bid on {safe_name}. Send us your firm ask "
-            f"and we'll circulate it to buyers in our network."
-        )
+        _buyers = _lookup_buy_interest(company_name)
+        if _buyers and _buyers > 0:
+            _holder_line = (
+                f"<strong>{_buyers:,} buyers</strong> in our network are actively "
+                f"looking at {safe_name}. Send us your firm ask and we'll show it to them."
+            )
+        else:
+            _holder_line = (
+                f"We don't currently have a live bid on {safe_name}. Send us your firm ask "
+                f"and we'll circulate it to buyers in our network."
+            )
     else:
         _holders = _lookup_holders(company_name)
         if _holders and _holders > 0:
