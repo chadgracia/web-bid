@@ -264,6 +264,14 @@ def _render_page(event):
     _verified_email = _verify_handoff_token(sso)
     is_anonymous = _verified_email is None
 
+    # A numeric name= or company= means someone passed a company_id — treat it as one.
+    if not company_id and company_name.strip().isdigit():
+        company_id = company_name.strip()
+        company_name = ""
+    if not company_id and company_param.strip().isdigit():
+        company_id = company_param.strip()
+        company_param = ""
+
     # Anonymous entry via ?company=Name (no id): resolve name -> directory entry
     # so we still get pricing + the correct display name.
     if company_param and not company_id:
@@ -274,6 +282,11 @@ def _render_page(event):
         rid, rname, _ = _resolve_company_by_name(company_name)
         company_id = rid or company_id
         company_name = rname or company_name
+
+    # ID without a name (numeric entry above, or a bare ?bid=ID link):
+    # recover the display name from the directory pricing map.
+    if company_id and not company_name:
+        company_name = ((_lookup_pricing(company_id) or {}).get("name") or "").strip()
 
     safe_name = html.escape(company_name) if company_name else "this company"
     safe_id = html.escape(company_id)
