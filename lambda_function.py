@@ -132,7 +132,7 @@ def _verify_handoff_token(token):
 def _json_response(status, obj):
     return {
         "statusCode": status,
-        "headers": {"Content-Type": "application/json"},
+        "headers": {"Content-Type": "application/json", "X-Robots-Tag": "noindex, nofollow"},
         "body": json.dumps(obj),
     }
 
@@ -375,6 +375,7 @@ def _render_page(event):
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
 <title>Place {'an Offer' if is_sell else 'a Bid'} — {safe_name}</title>
 <link rel="stylesheet" href="https://s3.us-east-1.amazonaws.com/main.css/master.css">
 <style>
@@ -569,7 +570,7 @@ def _render_page(event):
 
     return {
         "statusCode": 200,
-        "headers": {"Content-Type": "text/html"},
+        "headers": {"Content-Type": "text/html", "X-Robots-Tag": "noindex, nofollow"},
         "body": page,
     }
 
