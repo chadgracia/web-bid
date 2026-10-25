@@ -108,6 +108,8 @@ _VAL_SUFFIX = {
 
 def parse_valuation(raw):
     """Flexible valuation input ("1B", "$1.5B", "750m", "$150,000,000") -> dollars, or None.
+    A bare number under 1,000 means billions ("43" -> $43B); 1,000,000+ means dollars;
+    1,000-999,999 is ambiguous and unreadable.
     Anything under $1M is treated as unparseable (a company valuation, not a price)."""
     if raw in (None, ""):
         return None
@@ -115,7 +117,13 @@ def parse_valuation(raw):
     m = re.fullmatch(r"(\d+(?:\.\d*)?|\.\d+)([a-z]*)", s)
     if not m or m.group(2) not in _VAL_SUFFIX:
         return None
-    val = float(m.group(1)) * _VAL_SUFFIX[m.group(2)]
+    num = float(m.group(1))
+    if m.group(2) == "":
+        if num < 1000:
+            num *= 1e9
+        elif num < 1_000_000:
+            return None
+    val = num * _VAL_SUFFIX[m.group(2)]
     return round(val, 2) if val >= 1_000_000 else None
 
 
@@ -180,7 +188,7 @@ def _send_bid_email(email, company_id, company_name, gross, min_size, max_size,
                     deal_id="", deal_px="", valuation=None):
     """Email the bid or offer to Chad. No Pipeline write yet — this is the safe first step."""
     ses = boto3.client("ses", region_name="us-east-1")
-    struct_txt = ", ".join(structure) if structure else "(none)"
+    struct_txt = structure[0] if structure else "(none)"
     _word = "offer" if side == "sell" else "bid"
     if gross is not None:
         subject = f"New web {_word}: {company_name} @ ${gross}/sh"
@@ -255,6 +263,8 @@ def _handle_post(event):
         return _json_response(400, {"ok": False, "error": "Invalid numbers."})
 
     structure = data.get("structure") or []
+    if isinstance(structure, str):
+        structure = [structure]
     allowed = {"Direct", "Fund", "Forward"}
     structure = [s for s in structure if s in allowed]
 
@@ -266,7 +276,7 @@ def _handle_post(event):
     _val_raw = str(data.get("valuation") or "").strip()
     valuation = parse_valuation(_val_raw)
     if gross is None and _val_raw and valuation is None:
-        return _json_response(400, {"ok": False, "error": "Couldn't read that valuation. Try 1B or 750M."})
+        return _json_response(400, {"ok": False, "error": "Couldn't read that valuation. Try 43B or 750M."})
     if gross is None and valuation is None:
         return _json_response(400, {"ok": False, "error": "Enter either a price per share or a valuation."})
     if not (min_size > 0):
@@ -276,7 +286,9 @@ def _handle_post(event):
     if min_size > max_size:
         return _json_response(400, {"ok": False, "error": "Min size must be <= max size."})
     if not structure:
-        return _json_response(400, {"ok": False, "error": "Select at least one structure."})
+        return _json_response(400, {"ok": False, "error": "Select a structure."})
+    if len(structure) > 1:
+        return _json_response(400, {"ok": False, "error": "Select only one structure."})
     if not company_id:
         return _json_response(400, {"ok": False, "error": "Missing company."})
 
@@ -440,6 +452,16 @@ def _render_page(event):
   .row {{ display: flex; gap: 12px; }}
   .row > div {{ flex: 1; }}
   .struct {{ display: flex; gap: 16px; margin-top: 6px; }}
+  .pv {{ display: grid; grid-template-columns: 45% 1fr 45%; column-gap: 8px;
+         grid-template-areas: "pl . vl" "pi or vi" "pr . vr"; }}
+  .pv-pl {{ grid-area: pl; }} .pv-pi {{ grid-area: pi; }} .pv-pr {{ grid-area: pr; }}
+  .pv-vl {{ grid-area: vl; }} .pv-vi {{ grid-area: vi; }} .pv-vr {{ grid-area: vr; }}
+  .pv input {{ width: 100%; }}
+  .pv-or {{ grid-area: or; align-self: center; text-align: center; font-weight: 700; font-size: 16px; color: var(--ink); }}
+  @media (max-width: 519px) {{
+    .pv {{ grid-template-columns: 1fr; grid-template-areas: "pl" "pi" "pr" "or" "vl" "vi" "vr"; }}
+    .pv-or {{ margin-top: 14px; }}
+  }}
   #submitBtn {{ width: 100%; margin-top: 28px; padding: 14px; font-size: 15px; font-weight: 600; }}
   .overlay {{
     display: none; position: fixed; inset: 0; background: rgba(20,24,29,0.5);
@@ -456,18 +478,21 @@ def _render_page(event):
     <h1>{'Offer to Sell' if is_sell else 'Bid for'} {safe_name}</h1>
     <p class="sub">{_holder_line}</p>
 
-    <div class="fieldlabel">Gross price per share <span class="hint">(USD)</span></div>
-    <div style="display:flex;gap:12px;align-items:flex-start;">
-      <input id="gross" type="number" step="0.01" min="0" placeholder="e.g. 45.00" style="flex:0 0 calc(50% - 6px);">
-      {_market_html}
+    <div class="pv">
+      <div class="fieldlabel pv-pl">Gross price per share <span class="hint">(USD)</span></div>
+      <input id="gross" class="pv-pi" type="number" step="0.01" min="0" placeholder="e.g. 45.00">
+      <div class="pv-pr">
+        <div id="impliedVal" style="font-size:12px;color:var(--text-secondary);margin-top:6px;display:none;"></div>
+        <div style="margin-top:6px;">{_market_html}</div>
+      </div>
+      <div class="pv-or">OR</div>
+      <div class="fieldlabel pv-vl">Valuation <span class="hint">(USD)</span></div>
+      <input id="valuation" class="pv-vi" type="text" autocomplete="off" placeholder="e.g. 43B or 750M">
+      <div class="pv-vr">
+        <div id="valReadout" style="margin-top:6px;display:none;"></div>
+        <div class="hint" style="margin-top:4px;">Don't know the price? Enter the valuation.</div>
+      </div>
     </div>
-    <div id="impliedVal" style="font-size:12px;color:var(--text-secondary);margin-top:6px;display:none;"></div>
-
-    <div style="text-align:center;font-size:12px;color:var(--text-muted);margin:14px 0 0;">— or —</div>
-    <div class="fieldlabel" style="margin-top:6px;">Valuation <span class="hint">(USD)</span></div>
-    <input id="valuation" type="text" autocomplete="off" placeholder="e.g. 1B or 750M" style="width:calc(50% - 6px);">
-    <div class="hint" style="margin-top:4px;">If you don't know the price per share, enter the company valuation you're willing to pay at.</div>
-    <div id="valReadout" style="font-size:12px;color:var(--text-secondary);margin-top:6px;display:none;"></div>
 
     <div class="row">
       <div>
@@ -482,9 +507,9 @@ def _render_page(event):
 
     <div class="fieldlabel">Structure</div>
     <div class="struct">
-      <label class="checkbox-label"><input type="checkbox" class="struct-box" value="Direct"> Direct</label>
-      <label class="checkbox-label"><input type="checkbox" class="struct-box" value="Fund"> Fund / SPV</label>
-      <label class="checkbox-label"><input type="checkbox" class="struct-box" value="Forward"> Forward</label>
+      <label class="checkbox-label"><input type="radio" name="structure" class="struct-box" value="Direct"> Direct</label>
+      <label class="checkbox-label"><input type="radio" name="structure" class="struct-box" value="Fund"> Fund / SPV</label>
+      <label class="checkbox-label"><input type="radio" name="structure" class="struct-box" value="Forward"> Forward</label>
     </div>
 
     {_contact_html}
@@ -535,14 +560,22 @@ def _render_page(event):
 
     document.getElementById('gross').addEventListener('input', updateImplied);
 
-    // Mirrors parse_valuation, without the $1M floor (so small values can be flagged).
+    // Mirrors parse_valuation (bare <1,000 = billions; bare 1,000-999,999 unreadable),
+    // without the $1M floor (so small values can be flagged).
+    var VAL_UNREADABLE = "Couldn't read that valuation. Try 43B or 750M.";
+    var VAL_SMALL = 'That looks too small for a company valuation. Try 1B or 750M.';
     var VAL_SUF = {{'': 1, k: 1e3, thousand: 1e3, m: 1e6, mm: 1e6, mn: 1e6, mil: 1e6, million: 1e6,
                    b: 1e9, bn: 1e9, bil: 1e9, billion: 1e9, t: 1e12, tn: 1e12, trillion: 1e12}};
     function parseValuation(raw) {{
       var s = String(raw || '').toLowerCase().replace(/[$,\\s]/g, '');
       var m = s.match(/^(\\d+(?:\\.\\d*)?|\\.\\d+)([a-z]*)$/);
       if (!m || !Object.prototype.hasOwnProperty.call(VAL_SUF, m[2])) {{ return null; }}
-      var n = parseFloat(m[1]) * VAL_SUF[m[2]];
+      var num = parseFloat(m[1]);
+      if (m[2] === '') {{
+        if (num < 1000) {{ num *= 1e9; }}
+        else if (num < 1000000) {{ return null; }}
+      }}
+      var n = num * VAL_SUF[m[2]];
       return n > 0 ? n : null;
     }}
     // Mirrors fmt_valuation: $1B / $750M / $1.25B
@@ -555,12 +588,18 @@ def _render_page(event):
     }}
     function updateValReadout() {{
       var el = document.getElementById('valReadout');
-      var v = parseValuation(document.getElementById('valuation').value);
-      if (v === null) {{ el.style.display = 'none'; return; }}
-      var txt = '= <strong>' + fmtValuation(v) + '</strong>';
+      var raw = (document.getElementById('valuation').value || '').trim();
+      if (!raw) {{ el.style.display = 'none'; return; }}
+      var v = parseValuation(raw);
+      if (v === null || v < 1e6) {{
+        el.innerHTML = '<div style="font-size:12px;color:var(--neg);">' + (v === null ? VAL_UNREADABLE : VAL_SMALL) + '</div>';
+        el.style.display = 'block';
+        return;
+      }}
+      var txt = '<div style="font-size:20px;font-weight:700;color:var(--ink);">' + fmtValuation(v) + '</div>';
       if (LR_PPS > 0 && LR_VAL > 0) {{
         var pps = LR_PPS * (v / (LR_VAL * 1e9));
-        txt += ' · ≈ <strong>$' + pps.toFixed(2) + '/share</strong> implied · based on last public round, estimate only';
+        txt += '<div style="font-size:12px;color:var(--text-secondary);margin-top:2px;">≈ <strong>$' + pps.toFixed(2) + '/share</strong> implied · based on last public round, estimate only</div>';
       }}
       el.innerHTML = txt;
       el.style.display = 'block';
@@ -602,12 +641,12 @@ def _render_page(event):
       var valNum = valRaw ? parseValuation(valRaw) : null;
       if (!(gross > 0)) {{ gross = null; }}
       if (gross === null && !valRaw) {{ showErr('Enter either a price per share or a valuation.'); return; }}
-      if (valRaw && valNum === null) {{ showErr("Couldn't read that valuation. Try 1B or 750M."); return; }}
-      if (valRaw && valNum < 1e6) {{ showErr('That looks too small for a company valuation. Try 1B or 750M.'); return; }}
+      if (valRaw && valNum === null) {{ showErr(VAL_UNREADABLE); return; }}
+      if (valRaw && valNum < 1e6) {{ showErr(VAL_SMALL); return; }}
       if (!(minSize > 0)) {{ showErr('Enter a minimum size greater than 0.'); return; }}
       if (!(maxSize > 0)) {{ showErr('Enter a maximum size greater than 0.'); return; }}
       if (minSize > maxSize) {{ showErr('Minimum size must be less than or equal to maximum size.'); return; }}
-      if (structure.length === 0) {{ showErr('Select at least one structure.'); return; }}
+      if (structure.length === 0) {{ showErr('Select a structure.'); return; }}
 
       var subName = "", subEmail = "";
       if (IS_ANONYMOUS) {{
