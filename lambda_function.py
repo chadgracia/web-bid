@@ -1,6 +1,7 @@
 import json
 import html
 import os
+import re
 import time
 import hmac
 import hashlib
@@ -96,6 +97,43 @@ def _resolve_company_by_name(name):
         return "", name, {}
 
 
+# Valuation shorthand -> multiplier. Copied from deal-update-form's parse_valuation.
+_VAL_SUFFIX = {
+    "": 1, "k": 1e3, "thousand": 1e3,
+    "m": 1e6, "mm": 1e6, "mn": 1e6, "mil": 1e6, "million": 1e6,
+    "b": 1e9, "bn": 1e9, "bil": 1e9, "billion": 1e9,
+    "t": 1e12, "tn": 1e12, "trillion": 1e12,
+}
+
+
+def parse_valuation(raw):
+    """Flexible valuation input ("1B", "$1.5B", "750m", "$150,000,000") -> dollars, or None.
+    Anything under $1M is treated as unparseable (a company valuation, not a price)."""
+    if raw in (None, ""):
+        return None
+    s = str(raw).strip().lower().replace("$", "").replace(",", "").replace(" ", "")
+    m = re.fullmatch(r"(\d+(?:\.\d*)?|\.\d+)([a-z]*)", s)
+    if not m or m.group(2) not in _VAL_SUFFIX:
+        return None
+    val = float(m.group(1)) * _VAL_SUFFIX[m.group(2)]
+    return round(val, 2) if val >= 1_000_000 else None
+
+
+def fmt_valuation(val):
+    """Dollars -> "$1B" / "$750M" / "$1.25B". Empty string when missing."""
+    if val in (None, ""):
+        return ""
+    try:
+        f = float(str(val).replace(",", ""))
+    except (ValueError, TypeError):
+        return str(val)
+    for div, suf in ((1e12, "T"), (1e9, "B"), (1e6, "M"), (1e3, "K")):
+        if abs(f) >= div:
+            n = f"{round(f / div, 2):.2f}".rstrip("0").rstrip(".")
+            return f"${n}{suf}"
+    return f"${f:,.0f}"
+
+
 def _valid_email(s):
     """Very light email sanity check."""
     s = (s or "").strip()
@@ -139,12 +177,15 @@ def _json_response(status, obj):
 
 def _send_bid_email(email, company_id, company_name, gross, min_size, max_size,
                     structure, source="logged-in", submitter_name="", side="buy",
-                    deal_id="", deal_px=""):
+                    deal_id="", deal_px="", valuation=None):
     """Email the bid or offer to Chad. No Pipeline write yet — this is the safe first step."""
     ses = boto3.client("ses", region_name="us-east-1")
     struct_txt = ", ".join(structure) if structure else "(none)"
     _word = "offer" if side == "sell" else "bid"
-    subject = f"New web {_word}: {company_name} @ ${gross}/sh"
+    if gross is not None:
+        subject = f"New web {_word}: {company_name} @ ${gross}/sh"
+    else:
+        subject = f"New web {_word}: {company_name} @ {fmt_valuation(valuation)} valuation"
     if source == "anonymous":
         who = f"Anonymous lead: {submitter_name} <{email}>"
     else:
@@ -153,8 +194,9 @@ def _send_bid_email(email, company_id, company_name, gross, min_size, max_size,
         f"A firm {'sell offer' if side == 'sell' else 'buy bid'} was submitted through the web-bid page.\n\n"
         f"Company:      {company_name} (id {company_id})\n"
         f"Bidder:       {who}\n"
-        f"Gross price:  ${gross}/share\n"
-        f"Min size:     ${min_size}\n"
+        + (f"Gross price:  ${gross}/share\n" if gross is not None else "")
+        + (f"Valuation:    {fmt_valuation(valuation)}\n" if valuation is not None else "")
+        + f"Min size:     ${min_size}\n"
         f"Max size:     ${max_size}\n"
         f"Structure:    {struct_txt}\n"
         + (f"In response:  deal {deal_id}"
@@ -204,8 +246,9 @@ def _handle_post(event):
         email = submitter_email
         source = "anonymous"
 
+    _gross_raw = data.get("gross")
     try:
-        gross = float(data.get("gross"))
+        gross = float(_gross_raw) if _gross_raw not in (None, "") else None
         min_size = float(data.get("min_size"))
         max_size = float(data.get("max_size"))
     except (TypeError, ValueError):
@@ -218,8 +261,14 @@ def _handle_post(event):
     company_id = str(data.get("company_id") or "")
     company_name = str(data.get("company_name") or "")
 
-    if not (gross > 0):
-        return _json_response(400, {"ok": False, "error": "Gross price must be greater than 0."})
+    if gross is not None and not (gross > 0):
+        gross = None
+    _val_raw = str(data.get("valuation") or "").strip()
+    valuation = parse_valuation(_val_raw)
+    if gross is None and _val_raw and valuation is None:
+        return _json_response(400, {"ok": False, "error": "Couldn't read that valuation. Try 1B or 750M."})
+    if gross is None and valuation is None:
+        return _json_response(400, {"ok": False, "error": "Enter either a price per share or a valuation."})
     if not (min_size > 0):
         return _json_response(400, {"ok": False, "error": "Min size must be greater than 0."})
     if not (max_size > 0):
@@ -236,7 +285,7 @@ def _handle_post(event):
     try:
         _send_bid_email(email, company_id, company_name, gross, min_size, max_size,
                         structure, source=source, submitter_name=submitter_name, side=_side,
-                        deal_id=_resp_deal_id, deal_px=_resp_px)
+                        deal_id=_resp_deal_id, deal_px=_resp_px, valuation=valuation)
     except Exception as e:
         return _json_response(500, {"ok": False, "error": "Could not send. Try again."})
 
@@ -414,6 +463,12 @@ def _render_page(event):
     </div>
     <div id="impliedVal" style="font-size:12px;color:var(--text-secondary);margin-top:6px;display:none;"></div>
 
+    <div style="text-align:center;font-size:12px;color:var(--text-muted);margin:14px 0 0;">— or —</div>
+    <div class="fieldlabel" style="margin-top:6px;">Valuation <span class="hint">(USD)</span></div>
+    <input id="valuation" type="text" autocomplete="off" placeholder="e.g. 1B or 750M" style="width:calc(50% - 6px);">
+    <div class="hint" style="margin-top:4px;">If you don't know the price per share, enter the company valuation you're willing to pay at.</div>
+    <div id="valReadout" style="font-size:12px;color:var(--text-secondary);margin-top:6px;display:none;"></div>
+
     <div class="row">
       <div>
         <div class="fieldlabel">Min size <span class="hint">($)</span></div>
@@ -480,6 +535,38 @@ def _render_page(event):
 
     document.getElementById('gross').addEventListener('input', updateImplied);
 
+    // Mirrors parse_valuation, without the $1M floor (so small values can be flagged).
+    var VAL_SUF = {{'': 1, k: 1e3, thousand: 1e3, m: 1e6, mm: 1e6, mn: 1e6, mil: 1e6, million: 1e6,
+                   b: 1e9, bn: 1e9, bil: 1e9, billion: 1e9, t: 1e12, tn: 1e12, trillion: 1e12}};
+    function parseValuation(raw) {{
+      var s = String(raw || '').toLowerCase().replace(/[$,\\s]/g, '');
+      var m = s.match(/^(\\d+(?:\\.\\d*)?|\\.\\d+)([a-z]*)$/);
+      if (!m || !Object.prototype.hasOwnProperty.call(VAL_SUF, m[2])) {{ return null; }}
+      var n = parseFloat(m[1]) * VAL_SUF[m[2]];
+      return n > 0 ? n : null;
+    }}
+    // Mirrors fmt_valuation: $1B / $750M / $1.25B
+    function fmtValuation(f) {{
+      var u = [[1e12, 'T'], [1e9, 'B'], [1e6, 'M'], [1e3, 'K']];
+      for (var i = 0; i < u.length; i++) {{
+        if (f >= u[i][0]) {{ return '$' + (Math.round(f / u[i][0] * 100) / 100) + u[i][1]; }}
+      }}
+      return '$' + f.toLocaleString('en-US', {{maximumFractionDigits: 2}});
+    }}
+    function updateValReadout() {{
+      var el = document.getElementById('valReadout');
+      var v = parseValuation(document.getElementById('valuation').value);
+      if (v === null) {{ el.style.display = 'none'; return; }}
+      var txt = '= <strong>' + fmtValuation(v) + '</strong>';
+      if (LR_PPS > 0 && LR_VAL > 0) {{
+        var pps = LR_PPS * (v / (LR_VAL * 1e9));
+        txt += ' · ≈ <strong>$' + pps.toFixed(2) + '/share</strong> implied · based on last public round, estimate only';
+      }}
+      el.innerHTML = txt;
+      el.style.display = 'block';
+    }}
+    document.getElementById('valuation').addEventListener('input', updateValReadout);
+
     function sizeDigits(el) {{
       return (el.value || '').replace(/[^0-9]/g, '');
     }}
@@ -511,7 +598,12 @@ def _render_page(event):
       var maxSize = parseFloat((document.getElementById('max_size').value || '').replace(/,/g, ''));
       var structure = Array.prototype.slice.call(document.querySelectorAll('.struct-box:checked')).map(function(b) {{ return b.value; }});
 
-      if (!(gross > 0)) {{ showErr('Enter a gross price per share greater than 0.'); return; }}
+      var valRaw = (document.getElementById('valuation').value || '').trim();
+      var valNum = valRaw ? parseValuation(valRaw) : null;
+      if (!(gross > 0)) {{ gross = null; }}
+      if (gross === null && !valRaw) {{ showErr('Enter either a price per share or a valuation.'); return; }}
+      if (valRaw && valNum === null) {{ showErr("Couldn't read that valuation. Try 1B or 750M."); return; }}
+      if (valRaw && valNum < 1e6) {{ showErr('That looks too small for a company valuation. Try 1B or 750M.'); return; }}
       if (!(minSize > 0)) {{ showErr('Enter a minimum size greater than 0.'); return; }}
       if (!(maxSize > 0)) {{ showErr('Enter a maximum size greater than 0.'); return; }}
       if (minSize > maxSize) {{ showErr('Minimum size must be less than or equal to maximum size.'); return; }}
@@ -539,6 +631,7 @@ def _render_page(event):
           company_id: COMPANY_ID,
           company_name: COMPANY_NAME,
           gross: gross,
+          valuation: valRaw,
           min_size: minSize,
           max_size: maxSize,
           structure: structure,
